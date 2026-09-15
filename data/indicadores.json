@@ -1,0 +1,23 @@
+{
+  "n_establecimientos": 24208,
+  "n_entidades": 32,
+  "n_municipios": 2460,
+  "n_jurisdicciones": 242,
+  "n_establecimientos_con_sinerhias": 16728,
+  "n_camas_habilitadas": 72368,
+  "n_camas_no_habilitadas": 3272,
+  "n_plazas_ocupadas_medicas_especialistas": 629970,
+  "n_tipos_equipo_general": 224,
+  "n_unidades_equipo_general": 554471,
+  "n_equipos_emat": 1132,
+  "n_equipos_emat_fuera_operacion": 346,
+  "n_establecimientos_con_emat_fuera_operacion": 214,
+  "n_especialidades": 34,
+  "fecha_generacion": "2026-09-15",
+  "fuentes": [
+    "ESTABLECIMIENTO_SALUD_202607.xlsx (catálogo CLUES, DGIS)",
+    "SINERHIAS_Nac_30012026.xlsx (camas y recursos humanos)",
+    "Eq_Med_Func_Nac_30012026.xlsx (equipo médico general)",
+    "Equipo_Medico_Detalle_.xlsx (Equipo Médico de Alta Tecnología)"
+  ]
+}
