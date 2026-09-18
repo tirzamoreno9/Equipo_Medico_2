@@ -26,6 +26,8 @@
 
   // ---------------------------------------------------------------- estado
   const cache = { entidades: null, indicadores: null, catEquipoGeneral: null, catEmat: null, catEspecialidades: null, shards: {} };
+  const MAPA_CENTRO_MEXICO = [23.6345, -102.5528];
+  let mapaActivo = null; // instancia Leaflet activa (resultados o ficha), para poder liberarla al navegar
 
   async function fetchJSON(url) {
     const r = await fetch(url, { cache: "no-store" });
@@ -83,6 +85,13 @@
     return cache.entidades.find((e) => e.clave === clave);
   }
 
+  function entidadOpcionTexto(clave) {
+    if (!clave) return "";
+    if (clave === "TODAS") return `🌎 Todas las entidades (nacional) — ${fmtNum(cache.indicadores.n_establecimientos)} establecimientos`;
+    const e = cache.entidades.find((x) => x.clave === clave);
+    return e ? `${e.nombre} (${e.n_establecimientos} establecimientos)` : "";
+  }
+
   function esc(s) {
     if (s === null || s === undefined) return "";
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -124,6 +133,7 @@
   async function render() {
     const { path, params } = parseHash();
     setNavActivo(path);
+    liberarMapa();
     try {
       if (!cache.entidades) {
         $main.innerHTML = `<div class="estado-vacio">Cargando datos base…</div>`;
@@ -368,12 +378,14 @@
         <p class="sub">${esc(m.desc)}</p>
 
         <div class="campo">
-          <label for="sel-entidad">Entidad federativa</label>
-          <select id="sel-entidad">
-            <option value="">Seleccione…</option>
-            <option value="TODAS" ${entidadSel === "TODAS" ? "selected" : ""}>🌎 Todas las entidades (nacional) — ${fmtNum(cache.indicadores.n_establecimientos)} establecimientos</option>
-            ${cache.entidades.map((e) => `<option value="${e.clave}" ${e.clave === entidadSel ? "selected" : ""}>${esc(e.nombre)} (${e.n_establecimientos} establecimientos)</option>`).join("")}
-          </select>
+          <label for="in-entidad">Entidad federativa</label>
+          <p style="font-size:12px;color:var(--gris-500);margin:0 0 8px">Escribe para buscar, o selecciona de la lista completa.</p>
+          <div class="combobox" id="combo-entidad">
+            <input type="text" id="in-entidad" placeholder="Escriba el nombre de una entidad, o «todas»…" autocomplete="off"
+              value="${esc(entidadOpcionTexto(entidadSel))}">
+            <input type="hidden" id="sel-entidad-valor" value="${esc(entidadSel)}">
+            <div class="lista-opciones oculto" id="lista-entidades"></div>
+          </div>
         </div>
 
         <div id="filtros-territorio" class="${entidadMeta ? "" : "oculto"}">
@@ -425,9 +437,29 @@
     `;
 
     document.getElementById("lnk-inicio").addEventListener("click", () => navigate("inicio"));
-    document.getElementById("sel-entidad").addEventListener("change", (ev) => {
-      navigate("buscar", { modo, entidad: ev.target.value });
-    });
+
+    {
+      const $inEnt = document.getElementById("in-entidad");
+      const $listaEnt = document.getElementById("lista-entidades");
+      const opcionesEntidad = [
+        { valor: "TODAS", texto: `🌎 Todas las entidades (nacional) — ${fmtNum(cache.indicadores.n_establecimientos)} establecimientos` },
+        ...cache.entidades.map((e) => ({ valor: e.clave, texto: `${e.nombre} (${e.n_establecimientos} establecimientos)` })),
+      ];
+      function mostrarOpcionesEntidad(filtro) {
+        const f = (filtro || "").toLocaleLowerCase("es-MX");
+        const opciones = opcionesEntidad.filter((o) => o.texto.toLocaleLowerCase("es-MX").includes(f));
+        if (!opciones.length) { $listaEnt.classList.add("oculto"); return; }
+        $listaEnt.innerHTML = opciones.map((o) => `<div data-valor="${esc(o.valor)}">${esc(o.texto)}</div>`).join("");
+        $listaEnt.classList.remove("oculto");
+      }
+      $inEnt.addEventListener("focus", () => { $inEnt.select(); mostrarOpcionesEntidad(""); });
+      $inEnt.addEventListener("input", () => mostrarOpcionesEntidad($inEnt.value));
+      $inEnt.addEventListener("blur", () => setTimeout(() => $listaEnt.classList.add("oculto"), 150));
+      $listaEnt.addEventListener("mousedown", (ev) => {
+        const d = ev.target.closest("[data-valor]");
+        if (d) navigate("buscar", { modo, entidad: d.dataset.valor });
+      });
+    }
 
     if (entidadMeta) {
       const $inMun = document.getElementById("in-municipio");
@@ -622,8 +654,16 @@
         <span>${conSinerhias} de ${total} con información SINERHIAS</span>
       </div>
       <div class="contador-resultados">${total} establecimiento${total === 1 ? "" : "s"} encontrado${total === 1 ? "" : "s"}</div>
-      <div class="result-list" id="lista-resultados"></div>
-      <div class="paginacion" id="paginacion"></div>
+      <div class="resultados-split">
+        <div class="resultados-lista-col">
+          <div class="result-list" id="lista-resultados"></div>
+          <div class="paginacion" id="paginacion"></div>
+        </div>
+        <div class="resultados-mapa-col">
+          <div id="mapa-resultados" class="mapa-contenedor"></div>
+          <p class="mapa-nota" id="mapa-nota"></p>
+        </div>
+      </div>
     `;
 
     const $lista = document.getElementById("lista-resultados");
@@ -635,6 +675,8 @@
         <div class="extra">${badgesCobertura(e)}${extraInfo(e)}</div>
       </a>
     `).join("");
+
+    inicializarMapaResultados(filtrados);
 
     const $pag = document.getElementById("paginacion");
     if (totalPaginas > 1) {
@@ -694,6 +736,89 @@
     return `<span class="status-chip no">✕ Fuera de operación — ${x.motivo_no_funciona ? esc(x.motivo_no_funciona) : "motivo sin capturar"}</span>`;
   }
 
+  // -------------------------------------------------------------- mapa
+  function liberarMapa() {
+    if (mapaActivo) {
+      mapaActivo.remove();
+      mapaActivo = null;
+    }
+  }
+
+  const MAX_MARCADORES_MAPA = 4000;
+
+  function popupEstablecimiento(e) {
+    return `
+      <div class="popup-est">
+        <b>${esc(e.nombre)}</b>
+        <div class="fila">${esc(e.nivel_atencion) || "Nivel de atención sin capturar"}</div>
+        <div class="fila">${esc(e.institucion) || ""}</div>
+        <div class="fila">${esc(e.municipio)}, ${esc(e.entidad)}</div>
+        <a class="ver-ficha" href="#/ficha?clues=${e.clues}&entidad=${e.entidad_clave}">Ver ficha completa →</a>
+      </div>
+    `;
+  }
+
+  function inicializarMapaResultados(establecimientos) {
+    const $div = document.getElementById("mapa-resultados");
+    const $nota = document.getElementById("mapa-nota");
+    if (!$div || typeof L === "undefined") return;
+    liberarMapa();
+
+    if (establecimientos.length > MAX_MARCADORES_MAPA) {
+      $div.innerHTML = `<div class="mapa-aviso">Hay ${fmtNum(establecimientos.length)} establecimientos — son demasiados para mostrar en el mapa a la vez. Acota con un municipio, jurisdicción o alguno de los filtros «Solo con…» para verlos aquí.</div>`;
+      if ($nota) $nota.textContent = "";
+      return;
+    }
+
+    const conCoords = establecimientos.filter((e) => {
+      const lat = parseFloat(e.lat), lon = parseFloat(e.lon);
+      return e.lat && e.lon && !isNaN(lat) && !isNaN(lon);
+    });
+    const sinCoords = establecimientos.length - conCoords.length;
+
+    $div.innerHTML = "";
+    const map = L.map($div, { scrollWheelZoom: true }).setView(MAPA_CENTRO_MEXICO, 5);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+      maxZoom: 19,
+    }).addTo(map);
+
+    if (conCoords.length) {
+      const cluster = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 55 });
+      const bounds = [];
+      conCoords.forEach((e) => {
+        const lat = parseFloat(e.lat), lon = parseFloat(e.lon);
+        bounds.push([lat, lon]);
+        const marker = L.marker([lat, lon]);
+        marker.bindPopup(popupEstablecimiento(e), { maxWidth: 260 });
+        cluster.addLayer(marker);
+      });
+      map.addLayer(cluster);
+      map.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
+    }
+
+    mapaActivo = map;
+    if ($nota) {
+      $nota.textContent = sinCoords
+        ? `Mostrando ${fmtNum(conCoords.length)} de ${fmtNum(establecimientos.length)} establecimientos con coordenadas registradas en la fuente (${fmtNum(sinCoords)} sin coordenadas no se pueden ubicar).`
+        : `Mostrando ${fmtNum(conCoords.length)} establecimiento${conCoords.length === 1 ? "" : "s"} en el mapa.`;
+    }
+  }
+
+  function inicializarMapaFicha(e) {
+    const $div = document.getElementById("mapa-ficha");
+    if (!$div || typeof L === "undefined") return;
+    const lat = parseFloat(e.lat), lon = parseFloat(e.lon);
+    if (isNaN(lat) || isNaN(lon)) return;
+    const map = L.map($div, { scrollWheelZoom: false }).setView([lat, lon], 15);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+      maxZoom: 19,
+    }).addTo(map);
+    L.marker([lat, lon]).addTo(map).bindPopup(`<b>${esc(e.nombre)}</b>`);
+    mapaActivo = map;
+  }
+
   // -------------------------------------------------------------- ficha
   async function renderFicha(params) {
     const clues = params.get("clues");
@@ -720,9 +845,20 @@
         <div class="meta-linea">${esc(e.tipo_establecimiento || "")}${e.nivel_atencion ? " · Nivel de atención: " + esc(e.nivel_atencion) : ""} · ${esc(e.institucion || "")}</div>
       </div>
 
+      <nav class="toc-ficha" aria-label="Ir a sección de la ficha">
+        <button data-ir="bloque-1">1. Información</button>
+        <button data-ir="bloque-2">2. Ubicación</button>
+        <button data-ir="bloque-3">3. Camas</button>
+        <button data-ir="bloque-4">4. Rec. humanos</button>
+        <button data-ir="bloque-5">5. Servicios</button>
+        <button data-ir="bloque-6">6. Equipo general</button>
+        <button data-ir="bloque-7">7. EMAT</button>
+        <button data-ir="bloque-8">8. Fuente</button>
+      </nav>
+
       ${sinSinerhias ? `<div class="aviso advertencia">⚠️ Este establecimiento está en operación pero no reporta información a SINERHIAS: no se muestran camas, recursos humanos, especialidades ni equipo porque la fuente no tiene datos — no porque el valor sea cero.</div>` : ""}
 
-      <details class="bloque" open>
+      <details class="bloque" id="bloque-1" open>
         <summary><span class="n">1</span>Información general<span class="flecha">▾</span></summary>
         <div class="contenido">
           <div class="grid-info">
@@ -738,7 +874,7 @@
         </div>
       </details>
 
-      <details class="bloque" open>
+      <details class="bloque" id="bloque-2" open>
         <summary><span class="n">2</span>Ubicación<span class="flecha">▾</span></summary>
         <div class="contenido">
           <div class="grid-info">
@@ -747,8 +883,12 @@
             <div><b>Municipio</b>${esc(e.municipio)}</div>
             <div><b>Localidad</b>${esc(e.localidad) || '<span class="dv dv-ausente">Sin capturar</span>'}</div>
             <div><b>Dirección</b>${esc(direccion) || '<span class="dv dv-ausente">Sin capturar</span>'}</div>
+            <div><b>Coordenadas geográficas</b>${e.lat && e.lon ? `${esc(e.lat)}, ${esc(e.lon)}` : '<span class="dv dv-ausente">Sin coordenadas en la fuente</span>'}</div>
           </div>
-          ${e.lat && e.lon ? `<p style="margin-top:12px"><a class="btn secundario" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${e.lat},${e.lon}">Abrir ubicación en el mapa ↗</a></p>` : ""}
+          ${e.lat && e.lon ? `
+            <p style="margin-top:12px"><a class="btn secundario" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${e.lat},${e.lon}">Ver en Google Maps ↗</a></p>
+            <div id="mapa-ficha" class="mapa-contenedor mapa-ficha"></div>
+          ` : ""}
         </div>
       </details>
 
@@ -758,7 +898,7 @@
       ${renderBloqueEquipoGeneral(e)}
       ${renderBloqueEmat(e)}
 
-      <details class="bloque" open>
+      <details class="bloque" id="bloque-8" open>
         <summary><span class="n">8</span>Fuente y actualización<span class="flecha">▾</span></summary>
         <div class="contenido">
           <div class="grid-info">
@@ -779,6 +919,16 @@
     document.getElementById("lnk-atras").addEventListener("click", () => history.back());
     document.getElementById("btn-nueva").addEventListener("click", () => navigate("inicio"));
     document.getElementById("btn-fin").addEventListener("click", () => navigate("inicio"));
+    document.querySelector(".toc-ficha").addEventListener("click", (ev) => {
+      const b = ev.target.closest("button[data-ir]");
+      if (!b) return;
+      const destino = document.getElementById(b.dataset.ir);
+      if (!destino) return;
+      if (destino.tagName === "DETAILS") destino.open = true;
+      destino.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    if (e.lat && e.lon) inicializarMapaFicha(e);
   }
 
   function avisoSinCaptura(texto) {
@@ -787,15 +937,15 @@
 
   function renderBloqueCamas(e) {
     if (!e.tiene_sinerhias) {
-      return `<details class="bloque"><summary><span class="n">3</span>Camas<span class="flecha">▾</span></summary>
+      return `<details class="bloque" id="bloque-3"><summary><span class="n">3</span>Camas<span class="flecha">▾</span></summary>
         <div class="contenido">${avisoSinCaptura("Sin información en la fuente (el establecimiento no reporta a SINERHIAS).")}</div></details>`;
     }
     if (!e.camas || !e.camas.categorias.length) {
-      return `<details class="bloque" open><summary><span class="n">3</span>Camas<span class="flecha">▾</span></summary>
+      return `<details class="bloque" id="bloque-3" open><summary><span class="n">3</span>Camas<span class="flecha">▾</span></summary>
         <div class="contenido">${avisoSinCaptura("Sin captura de camas para este establecimiento.")}</div></details>`;
     }
     const filas = e.camas.categorias.map((c) => `<tr><td>${esc(c.categoria)}</td><td>${fmtNum(c.habilitadas)}</td><td>${fmtNum(c.no_habilitadas)}</td></tr>`).join("");
-    return `<details class="bloque" open><summary><span class="n">3</span>Camas<span class="flecha">▾</span></summary>
+    return `<details class="bloque" id="bloque-3" open><summary><span class="n">3</span>Camas<span class="flecha">▾</span></summary>
       <div class="contenido">
         <p style="font-size:13px;color:var(--gris-700)">Camas habilitadas por categoría (no incluye cunas). Total habilitadas: <b>${fmtNum(e.camas.total_habilitadas)}</b> · No habilitadas: <b>${fmtNum(e.camas.total_no_habilitadas)}</b>.</p>
         <div class="wrap-tabla"><table class="tabla-medida"><thead><tr><th>Categoría</th><th>Habilitadas</th><th>No habilitadas</th></tr></thead><tbody>${filas}</tbody></table></div>
@@ -804,16 +954,16 @@
 
   function renderBloqueRH(e) {
     if (!e.tiene_sinerhias) {
-      return `<details class="bloque"><summary><span class="n">4</span>Recursos humanos (plazas)<span class="flecha">▾</span></summary>
+      return `<details class="bloque" id="bloque-4"><summary><span class="n">4</span>Recursos humanos (plazas)<span class="flecha">▾</span></summary>
         <div class="contenido">${avisoSinCaptura("Sin información en la fuente (el establecimiento no reporta a SINERHIAS).")}</div></details>`;
     }
     if (!e.rh) {
-      return `<details class="bloque"><summary><span class="n">4</span>Recursos humanos (plazas)<span class="flecha">▾</span></summary>
+      return `<details class="bloque" id="bloque-4"><summary><span class="n">4</span>Recursos humanos (plazas)<span class="flecha">▾</span></summary>
         <div class="contenido">${avisoSinCaptura("Sin captura de recursos humanos para este establecimiento.")}</div></details>`;
     }
     const filasGrupo = e.rh.grupos.map((g) => `<tr><td>${esc(g.grupo)}</td><td>${fmtNum(g.plazas_ocupadas)}</td><td>${fmtNum(g.plazas_autorizadas)}</td></tr>`).join("");
     const filasEsp = e.rh.especialistas.map((s) => `<tr><td>${esc(s.especialidad)}</td><td>${fmtNum(s.plazas_ocupadas)}</td><td>${fmtNum(s.plazas_autorizadas)}</td></tr>`).join("");
-    return `<details class="bloque"><summary><span class="n">4</span>Recursos humanos (plazas)<span class="flecha">▾</span></summary>
+    return `<details class="bloque" id="bloque-4"><summary><span class="n">4</span>Recursos humanos (plazas)<span class="flecha">▾</span></summary>
       <div class="contenido">
         <p style="font-size:13px;color:var(--gris-700)">Cifras en <b>plazas</b> (posiciones), no en número de personas. Total de plazas ocupadas: <b>${fmtNum(e.rh.total_plazas_ocupadas)}</b> de ${fmtNum(e.rh.total_plazas_autorizadas)} autorizadas.</p>
         <h4 style="font-size:12.5px;color:var(--gris-700);margin:14px 0 4px">Por grupo de personal</h4>
@@ -825,11 +975,11 @@
 
   function renderBloqueServicios(e) {
     if (!e.tiene_sinerhias) {
-      return `<details class="bloque"><summary><span class="n">5</span>Servicios y especialidades médicas<span class="flecha">▾</span></summary>
+      return `<details class="bloque" id="bloque-5"><summary><span class="n">5</span>Servicios y especialidades médicas<span class="flecha">▾</span></summary>
         <div class="contenido">${avisoSinCaptura("Sin información en la fuente (el establecimiento no reporta a SINERHIAS).")}</div></details>`;
     }
     const especialidades = e.rh ? e.rh.especialistas.filter((s) => s.plazas_ocupadas > 0 && !["General", "Otros"].includes(s.especialidad)) : [];
-    return `<details class="bloque"><summary><span class="n">5</span>Servicios y especialidades médicas<span class="flecha">▾</span></summary>
+    return `<details class="bloque" id="bloque-5"><summary><span class="n">5</span>Servicios y especialidades médicas<span class="flecha">▾</span></summary>
       <div class="contenido">
         <p style="font-size:12.5px;color:var(--gris-700)">Evidencia a partir de plazas médicas especialistas ocupadas registradas en SINERHIAS (no equivale a licencia sanitaria de servicio).</p>
         ${especialidades.length ? `<div class="extra">${especialidades.map((s) => `<span class="pill destaca">${esc(s.especialidad)} · ${s.plazas_ocupadas} plaza(s)</span>`).join("")}</div>` : avisoSinCaptura("Sin especialidades con personal médico registrado.")}
@@ -838,11 +988,11 @@
 
   function renderBloqueEquipoGeneral(e) {
     if (!e.equipo_general.length) {
-      return `<details class="bloque"><summary><span class="n">6</span>Equipo médico general<span class="flecha">▾</span></summary>
+      return `<details class="bloque" id="bloque-6"><summary><span class="n">6</span>Equipo médico general<span class="flecha">▾</span></summary>
         <div class="contenido">${avisoSinCaptura(e.tiene_sinerhias ? "Sin captura de equipo médico general." : "Sin información en la fuente (el establecimiento no reporta a SINERHIAS).")}</div></details>`;
     }
     const filas = e.equipo_general.slice().sort((a, b) => a.nombre.localeCompare(b.nombre, "es")).map((x) => `<tr><td>${esc(x.nombre)}</td><td>${fmtNum(x.cantidad)}</td></tr>`).join("");
-    return `<details class="bloque"><summary><span class="n">6</span>Equipo médico general<span class="flecha">▾</span></summary>
+    return `<details class="bloque" id="bloque-6"><summary><span class="n">6</span>Equipo médico general<span class="flecha">▾</span></summary>
       <div class="contenido">
         <p style="font-size:12.5px;color:var(--gris-700)">Equipo de uso común (consultorios, urgencias, hospitalización, quirófanos y demás áreas). Conteo por tipo, no incluye marca/modelo/número de serie.</p>
         <div class="wrap-tabla"><table class="tabla-medida"><thead><tr><th>Equipo</th><th>Cantidad registrada</th></tr></thead><tbody>${filas}</tbody></table></div>
@@ -851,7 +1001,7 @@
 
   function renderBloqueEmat(e) {
     if (!e.equipo_emat.length) {
-      return `<details class="bloque"><summary><span class="n">7</span>Equipo Médico de Alta Tecnología (EMAT)<span class="flecha">▾</span></summary>
+      return `<details class="bloque" id="bloque-7"><summary><span class="n">7</span>Equipo Médico de Alta Tecnología (EMAT)<span class="flecha">▾</span></summary>
         <div class="contenido">${avisoSinCaptura("Sin equipo de alta tecnología registrado para este establecimiento.")}</div></details>`;
     }
     const nFuera = e.equipo_emat.filter(equipoFuera).length;
@@ -861,7 +1011,7 @@
         <td>${esc(x.nombre)}</td><td>${esc(x.marca) || "—"}</td><td>${esc(x.modelo) || "—"}</td><td>${esc(x.numero_serie) || "—"}</td>
         <td>${esc(x.servicio) || "—"}</td><td>${chipEstadoEquipo(x)}</td>
       </tr>`).join("");
-    return `<details class="bloque" ${nFuera ? "open" : ""}><summary><span class="n">7</span>Equipo Médico de Alta Tecnología (EMAT)${nFuera ? `<span class="badge-resumen alerta">⚠ ${nFuera} fuera de operación</span>` : ""}<span class="flecha">▾</span></summary>
+    return `<details class="bloque" id="bloque-7" ${nFuera ? "open" : ""}><summary><span class="n">7</span>Equipo Médico de Alta Tecnología (EMAT)${nFuera ? `<span class="badge-resumen alerta">⚠ ${nFuera} fuera de operación</span>` : ""}<span class="flecha">▾</span></summary>
       <div class="contenido">
         <p style="font-size:12.5px;color:var(--gris-700)">Un renglón por equipo físico. Marca, modelo y número de serie tal como fueron capturados en la fuente (sin normalizar).
         ${nFuera ? ` Los equipos fuera de operación se muestran primero, con el motivo capturado en la columna Estado.` : ""}</p>
