@@ -165,16 +165,22 @@
         ${indicadorHTML(i.n_entidades, "Entidades federativas")}
         ${indicadorHTML(fmtNum(i.n_municipios), "Municipios con establecimientos")}
         ${indicadorHTML(fmtNum(i.n_jurisdicciones), "Jurisdicciones sanitarias")}
-        ${indicadorHTML(fmtNum(i.n_camas_habilitadas), "Camas habilitadas")}
+        ${indicadorHTML(fmtNum(i.n_camas_censables), "Camas censables")}
+        ${indicadorHTML(fmtNum(i.n_camas_no_censables), "Camas no censables")}
         ${indicadorHTML(fmtNum(i.n_plazas_ocupadas_medicas_especialistas), "Plazas médicas ocupadas")}
         ${indicadorHTML(fmtNum(i.n_unidades_equipo_general), "Unidades de equipo general")}
         ${indicadorHTML(fmtNum(i.n_equipos_emat), "Equipos EMAT registrados")}
       </div>
 
-      <button class="indicador indicador-link" id="btn-ver-emat-fuera" style="width:100%;margin-bottom:26px;display:flex;align-items:center;justify-content:space-between;gap:14px">
+      <button class="indicador indicador-link" id="btn-ver-emat-fuera" style="width:100%;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:14px">
         <span><span class="num" style="color:var(--ambar-700)">${fmtNum(i.n_equipos_emat_fuera_operacion)}</span>
         <span class="lbl">equipos EMAT fuera de operación, en ${fmtNum(i.n_establecimientos_con_emat_fuera_operacion)} establecimientos — ver el listado completo con motivos</span></span>
       </button>
+
+      <div class="indicador" style="width:100%;margin-bottom:26px">
+        <span class="num" style="color:var(--ambar-700)">${fmtNum(i.n_camas_censables_inhabilitadas + i.n_camas_no_censables_inhabilitadas)}</span>
+        <span class="lbl">camas inhabilitadas (${fmtNum(i.n_camas_censables_inhabilitadas)} censables + ${fmtNum(i.n_camas_no_censables_inhabilitadas)} no censables) — usa el filtro "Solo con camas inhabilitadas" al buscar por establecimiento o ubicación</span>
+      </div>
 
       <div class="modos" id="modos"></div>
     `;
@@ -205,6 +211,8 @@
           <div><b>Conceptos EMAT registrados</b>${(cache.catEmat || []).length}</div>
           <div><b>Especialidades con personal registrado</b>${i.n_especialidades}</div>
           <div><b>Equipos EMAT fuera de operación</b>${fmtNum(i.n_equipos_emat_fuera_operacion)} de ${fmtNum(i.n_equipos_emat)} (${Math.round(100 * i.n_equipos_emat_fuera_operacion / i.n_equipos_emat)}%), en ${fmtNum(i.n_establecimientos_con_emat_fuera_operacion)} establecimientos</div>
+          <div><b>Camas censables</b>${fmtNum(i.n_camas_censables)} (${fmtNum(i.n_camas_censables_habilitadas)} habilitadas + ${fmtNum(i.n_camas_censables_inhabilitadas)} inhabilitadas)</div>
+          <div><b>Camas no censables</b>${fmtNum(i.n_camas_no_censables)} (${fmtNum(i.n_camas_no_censables_habilitadas)} habilitadas + ${fmtNum(i.n_camas_no_censables_inhabilitadas)} inhabilitadas)</div>
         </div>
         <div class="aviso advertencia">
           ⚠️ Los establecimientos sin información SINERHIAS existen y están en operación, pero no reportan camas, recursos humanos ni
@@ -214,6 +222,18 @@
           ⚠️ ${fmtNum(i.n_equipos_emat_fuera_operacion)} equipos EMAT (${Math.round(100 * i.n_equipos_emat_fuera_operacion / i.n_equipos_emat)}% del total registrado) están fuera de operación.
           <button class="btn secundario" id="btn-ir-reporte-emat" style="margin-top:8px">Ver el listado completo con motivos →</button>
         </div>
+        <h3 style="font-size:14px;color:var(--inst-900)">Camas: dos clasificaciones independientes</h3>
+        <p style="font-size:13px;color:var(--gris-700)">Criterio: NOM-035-SSA3-2012 (numerales 3.6, 3.7 y 3.65) y Glosario DGIS 2022.</p>
+        <ul style="font-size:13px;color:var(--gris-700)">
+          <li><b>Censable / no censable</b> — el <i>tipo</i> de cama. Censable: genera egreso hospitalario, destinada a
+          pacientes internos (cada ocupación/desocupación es un movimiento oficial de ingreso o egreso). No censable: atención
+          transitoria, observación, cuidados críticos o estancia menor a 24 horas — nunca genera un egreso hospitalario.</li>
+          <li><b>Habilitada / inhabilitada</b> — el <i>estatus operativo</i> de la cama en este momento.</li>
+          <li>Estas dos clasificaciones son independientes y <b>no se mezclan</b>: una cama censable inhabilitada sigue
+          contando como censable. Camas censables totales = censables habilitadas + censables inhabilitadas.</li>
+          <li>Las cunas de recién nacido (3,731 a nivel nacional) quedan <b>fuera de ambas clasificaciones</b>: no generan
+          ingreso/egreso propio independiente del de la madre. Se excluyen del conteo de camas.</li>
+        </ul>
         <h3 style="font-size:14px;color:var(--inst-900)">Fuentes utilizadas</h3>
         <ul style="font-size:13px;color:var(--gris-700)">
           ${i.fuentes.map((f) => `<li>${esc(f)}</li>`).join("")}
@@ -222,8 +242,6 @@
         <ul style="font-size:13px;color:var(--gris-700)">
           <li>No se incluyen CLUES privados ni fuera de operación.</li>
           <li>Los recursos humanos se reportan como <b>plazas</b> (posiciones autorizadas u ocupadas), no como número de personas.</li>
-          <li>Las camas se reportan como <b>habilitadas / no habilitadas</b> por categoría; no se usa el término "disponibles" porque
-          ninguna fuente registra ocupación en tiempo real. Las cunas se excluyen del conteo de camas.</li>
           <li>El equipo médico general (conteo por establecimiento y tipo) y el Equipo Médico de Alta Tecnología —EMAT— (un registro
           por equipo físico) son catálogos independientes y nunca se combinan en una misma cifra.</li>
           <li>No se muestra información personal de pacientes ni de personal (nombres de médicos por equipo, expedientes, etc.).</li>
@@ -363,6 +381,7 @@
       camas: params.get("soloCamas") === "1",
       rh: params.get("soloRh") === "1",
       ematFuera: params.get("soloEmatFuera") === "1",
+      camasInhab: params.get("soloCamasInhab") === "1",
     };
     const muestraFiltroCobertura = modo === "establecimiento" || modo === "ubicacion";
 
@@ -423,6 +442,7 @@
               <label class="chip-check chip-check-alerta"><input type="checkbox" id="chk-emat-fuera" ${soloCon.ematFuera ? "checked" : ""}> ⚠ Solo con EMAT fuera de operación</label>
               <label class="chip-check"><input type="checkbox" id="chk-equipo" ${soloCon.equipoGeneral ? "checked" : ""}> Solo con equipo general</label>
               <label class="chip-check"><input type="checkbox" id="chk-camas" ${soloCon.camas ? "checked" : ""}> Solo con camas registradas</label>
+              <label class="chip-check chip-check-alerta"><input type="checkbox" id="chk-camas-inhab" ${soloCon.camasInhab ? "checked" : ""}> ⚠ Solo con camas inhabilitadas</label>
               <label class="chip-check"><input type="checkbox" id="chk-rh" ${soloCon.rh ? "checked" : ""}> Solo con recursos humanos</label>
             </div>
           </div>
@@ -491,6 +511,7 @@
           if (document.getElementById("chk-emat-fuera").checked) p.soloEmatFuera = "1";
           if (document.getElementById("chk-equipo").checked) p.soloEquipoGeneral = "1";
           if (document.getElementById("chk-camas").checked) p.soloCamas = "1";
+          if (document.getElementById("chk-camas-inhab").checked) p.soloCamasInhab = "1";
           if (document.getElementById("chk-rh").checked) p.soloRh = "1";
         }
         navigate("buscar", p);
@@ -563,6 +584,7 @@
     if (soloCon.ematFuera) filtrados = filtrados.filter((e) => e.equipo_emat.some(equipoFuera));
     if (soloCon.equipoGeneral) filtrados = filtrados.filter((e) => e.equipo_general.length);
     if (soloCon.camas) filtrados = filtrados.filter((e) => e.camas);
+    if (soloCon.camasInhab) filtrados = filtrados.filter((e) => e.camas && e.camas.total_no_habilitadas > 0);
     if (soloCon.rh) filtrados = filtrados.filter((e) => e.rh);
 
     const top = (arr, n) => arr.slice(0, n);
@@ -625,12 +647,13 @@
     const entidadMeta = metaEntidad(entidad);
     const conSinerhias = filtrados.filter((e) => e.tiene_sinerhias).length;
     const conCamas = filtrados.filter((e) => e.camas).length;
+    const conCamasInhab = filtrados.filter((e) => e.camas && e.camas.total_no_habilitadas > 0).length;
     const conRh = filtrados.filter((e) => e.rh).length;
     const conEquipo = filtrados.filter((e) => e.equipo_general.length).length;
     const conEmat = filtrados.filter((e) => e.equipo_emat.length).length;
     const conEmatFuera = filtrados.filter((e) => e.equipo_emat.some(equipoFuera)).length;
 
-    const algunFiltroCobertura = soloCon.emat || soloCon.ematFuera || soloCon.equipoGeneral || soloCon.camas || soloCon.rh;
+    const algunFiltroCobertura = soloCon.emat || soloCon.ematFuera || soloCon.equipoGeneral || soloCon.camas || soloCon.camasInhab || soloCon.rh;
 
     if (!total) {
       $zona.innerHTML = `
@@ -650,6 +673,7 @@
         ${conEmatFuera ? `<span class="texto-alerta">⚠ ${conEmatFuera} con EMAT fuera de operación</span>` : ""}
         <span>🧰 ${conEquipo} con equipo general</span>
         <span>🛏 ${conCamas} con camas</span>
+        ${conCamasInhab ? `<span class="texto-alerta">⚠ ${conCamasInhab} con camas inhabilitadas</span>` : ""}
         <span>👥 ${conRh} con recursos humanos</span>
         <span>${conSinerhias} de ${total} con información SINERHIAS</span>
       </div>
@@ -700,6 +724,7 @@
         if (soloCon.ematFuera) p.soloEmatFuera = "1";
         if (soloCon.equipoGeneral) p.soloEquipoGeneral = "1";
         if (soloCon.camas) p.soloCamas = "1";
+        if (soloCon.camasInhab) p.soloCamasInhab = "1";
         if (soloCon.rh) p.soloRh = "1";
         navigate("buscar", p);
       });
@@ -723,8 +748,16 @@
     } else {
       badgeEmat = `<span class="pill destaca">🛰 ${nEmat} EMAT · todos en funcionamiento</span>`;
     }
+    let badgeCamas;
+    if (!e.camas) {
+      badgeCamas = `<span class="pill pill-ausente">🛏 sin camas</span>`;
+    } else if (e.camas.total_no_habilitadas) {
+      badgeCamas = `<span class="pill pill-alerta" title="Ver bloque 3 de la ficha, censables vs. no censables">🛏 ${fmtNum(e.camas.total_habilitadas)} habilitadas · ⚠ ${fmtNum(e.camas.total_no_habilitadas)} inhabilitadas</span>`;
+    } else {
+      badgeCamas = `<span class="pill destaca">🛏 ${fmtNum(e.camas.total_habilitadas)} camas habilitadas</span>`;
+    }
     return [
-      b(!!e.camas, "🛏", `${fmtNum(e.camas ? e.camas.total_habilitadas : 0)} camas`, "sin camas"),
+      badgeCamas,
       b(!!e.rh, "👥", `${fmtNum(e.rh ? e.rh.total_plazas_ocupadas : 0)} plazas`, "sin RH"),
       b(e.equipo_general.length > 0, "🧰", `${e.equipo_general.length} tipo(s) de equipo`, "sin equipo general"),
       badgeEmat,
@@ -944,11 +977,25 @@
       return `<details class="bloque" id="bloque-3" open><summary><span class="n">3</span>Camas<span class="flecha">▾</span></summary>
         <div class="contenido">${avisoSinCaptura("Sin captura de camas para este establecimiento.")}</div></details>`;
     }
-    const filas = e.camas.categorias.map((c) => `<tr><td>${esc(c.categoria)}</td><td>${fmtNum(c.habilitadas)}</td><td>${fmtNum(c.no_habilitadas)}</td></tr>`).join("");
-    return `<details class="bloque" id="bloque-3" open><summary><span class="n">3</span>Camas<span class="flecha">▾</span></summary>
+    const c = e.camas;
+    const nInhab = c.total_no_habilitadas;
+    const filaCat = (x) => `<tr class="${x.no_habilitadas > 0 ? "fila-alerta" : ""}">
+        <td>${esc(x.categoria)}</td><td>${fmtNum(x.habilitadas)}</td>
+        <td>${x.no_habilitadas > 0 ? `⚠ ${fmtNum(x.no_habilitadas)}` : fmtNum(x.no_habilitadas)}</td>
+      </tr>`;
+    const censables = c.categorias.filter((x) => x.censable).sort((a, b) => b.no_habilitadas - a.no_habilitadas);
+    const noCensables = c.categorias.filter((x) => !x.censable).sort((a, b) => b.no_habilitadas - a.no_habilitadas);
+    return `<details class="bloque" id="bloque-3" open><summary><span class="n">3</span>Camas${nInhab ? `<span class="badge-resumen alerta">⚠ ${fmtNum(nInhab)} inhabilitadas</span>` : ""}<span class="flecha">▾</span></summary>
       <div class="contenido">
-        <p style="font-size:13px;color:var(--gris-700)">Camas habilitadas por categoría (no incluye cunas). Total habilitadas: <b>${fmtNum(e.camas.total_habilitadas)}</b> · No habilitadas: <b>${fmtNum(e.camas.total_no_habilitadas)}</b>.</p>
-        <div class="wrap-tabla"><table class="tabla-medida"><thead><tr><th>Categoría</th><th>Habilitadas</th><th>No habilitadas</th></tr></thead><tbody>${filas}</tbody></table></div>
+        <p style="font-size:12.5px;color:var(--gris-700)">Censable / no censable es el <b>tipo de cama</b> (NOM-035-SSA3-2012); habilitada / inhabilitada es su <b>estatus operativo</b>. Son dos clasificaciones independientes — una cama censable inhabilitada sigue contando como censable. No incluye cunas.</p>
+        <div class="banda-cobertura" style="margin:10px 0">
+          <span><b>${fmtNum(c.total_censables)}</b> camas censables <span style="color:var(--gris-500)">(${fmtNum(c.censables_habilitadas)} habilitadas + ${fmtNum(c.censables_no_habilitadas)} inhabilitadas)</span></span>
+          <span><b>${fmtNum(c.total_no_censables)}</b> camas no censables <span style="color:var(--gris-500)">(${fmtNum(c.no_censables_habilitadas)} habilitadas + ${fmtNum(c.no_censables_no_habilitadas)} inhabilitadas)</span></span>
+        </div>
+        <h4 style="font-size:12.5px;color:var(--gris-700);margin:14px 0 4px">Camas censables (${censables.length} categorías)</h4>
+        <div class="wrap-tabla"><table class="tabla-medida"><thead><tr><th>Categoría</th><th>Habilitadas</th><th>Inhabilitadas</th></tr></thead><tbody>${censables.map(filaCat).join("")}</tbody></table></div>
+        <h4 style="font-size:12.5px;color:var(--gris-700);margin:14px 0 4px">Camas no censables (${noCensables.length} categorías) <span style="font-weight:400">— atención transitoria, observación o cuidados críticos, no genera egreso hospitalario</span></h4>
+        <div class="wrap-tabla"><table class="tabla-medida"><thead><tr><th>Categoría</th><th>Habilitadas</th><th>Inhabilitadas</th></tr></thead><tbody>${noCensables.map(filaCat).join("")}</tbody></table></div>
       </div></details>`;
   }
 
